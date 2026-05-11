@@ -1,0 +1,17 @@
+{
+  "runtime": {
+    "mae": 0.46353839992175927,
+    "rmse": 1.8392099154911663,
+    "algorithm": "lightgbm"
+  },
+  "vram": {
+    "mae": 0.11180759614729568,
+    "rmse": 0.16291753219895733,
+    "algorithm": "lightgbm"
+  },
+  "failure": {
+    "f1": 0.533535660091047,
+    "roc_auc": 0.8409644378885708,
+    "algorithm": "lightgbm"
+  }
+}

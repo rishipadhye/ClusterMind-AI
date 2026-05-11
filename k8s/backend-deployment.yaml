@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clustermind-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clustermind-backend
+  template:
+    metadata:
+      labels:
+        app: clustermind-backend
+    spec:
+      containers:
+        - name: backend
+          image: clustermind-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: API_PREFIX
+              value: /api/v1
+            - name: MODEL_BUNDLE_PATH
+              value: data/models/model_bundle.joblib
