@@ -9,3 +9,12 @@ backend/.pytest_cache/
 frontend/node_modules/
 frontend/dist/
 
+# Generated ML artifacts
+backend/data/models/
+backend/data/experiments/
+backend/data/synthetic_jobs.csv
+
+# Claude project files
+.claude/
+backend/.claude/
+
