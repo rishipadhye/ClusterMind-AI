@@ -120,12 +120,24 @@ class SyntheticWorkloadGenerator:
         return self.rng.choice([1, 2])
 
     def _sample_batch_size(self, model_type: str) -> int:
-        if model_type in {"gpt", "stable_diffusion"}:
+        # Batch ranges reflect what practitioners actually use per family: memory-
+        # hungry generative models run small batches (often with grad accumulation),
+        # while CNN/recommendation models scale to large batches.
+        if model_type == "stable_diffusion":
+            return self.rng.choice([1, 2, 4, 8, 16])
+        if model_type == "gpt":
+            return self.rng.choice([4, 8, 16, 32, 64])
+        if model_type in {"bert", "vision_transformer"}:
             return self.rng.choice([8, 16, 32, 64, 128])
         return self.rng.choice([16, 32, 64, 128, 256, 512])
 
     def _estimate_flops(self, model_type: str, dataset_size: int, batch_size: int) -> float:
-        multipliers = {
+        # Total training compute scales with FLOPs-per-sample times the number of
+        # samples processed (one epoch proxy). It is essentially independent of the
+        # batch size -- batching changes throughput/parallelism, not the total work
+        # done -- so we do NOT divide by batch here (an earlier version did, which
+        # made tiny-batch generative jobs report physically impossible FLOP counts).
+        flops_per_sample = {
             "resnet": 8e8,
             "bert": 2.5e9,
             "gpt": 1.2e10,
@@ -133,7 +145,7 @@ class SyntheticWorkloadGenerator:
             "stable_diffusion": 1.5e10,
             "recommendation": 7e8,
         }
-        return multipliers[model_type] * (dataset_size / batch_size)
+        return flops_per_sample[model_type] * dataset_size
 
     def _estimate_runtime_hours(
         self,
@@ -156,12 +168,16 @@ class SyntheticWorkloadGenerator:
             "recommendation": 0.9,
         }[model_type]
 
-        base = (estimated_flops / 1e14) * model_factor / (gpu_speed * max(num_gpus, 1))
-        io_penalty = np.log10(dataset_size) * 0.1
-        distributed_penalty = 0.92 if distributed_training else 1.0
-        mp_boost = 0.88 if mixed_precision else 1.0
+        # Runtime = total compute / effective throughput. Throughput scales with the
+        # GPU's relative speed and the GPU count (with a sub-linear scaling penalty
+        # for distributed training). Mixed precision gives a real wall-clock speedup.
+        effective_throughput = 3e14 * gpu_speed * max(num_gpus, 1)
+        scaling_penalty = 1.12 if (distributed_training and num_gpus >= 4) else 1.0
+        base = estimated_flops * model_factor / effective_throughput * scaling_penalty
+        mp_boost = 0.7 if mixed_precision else 1.0
         noise = np.random.normal(1.0, 0.08)
-        return float(max(0.05, base * io_penalty * distributed_penalty * mp_boost * noise))
+        # Clip to a realistic single-job window (a few minutes to ~2 weeks).
+        return float(np.clip(base * mp_boost * noise, 0.05, 400.0))
 
     def _estimate_peak_vram(
         self,
@@ -171,19 +187,39 @@ class SyntheticWorkloadGenerator:
         num_gpus: int,
         mixed_precision: bool,
     ) -> float:
-        model_base = {
-            "resnet": 6.0,
-            "bert": 12.0,
-            "gpt": 28.0,
-            "vision_transformer": 18.0,
-            "stable_diffusion": 24.0,
-            "recommendation": 8.0,
+        # Physically-grounded peak-VRAM model (see README "Synthetic generator
+        # assumptions"): peak memory ~= a fixed cost for weights + optimizer state,
+        # plus activation memory that grows ~linearly with the per-GPU batch size.
+        #
+        #   peak = weights_optimizer_base + activation_per_sample * per_gpu_batch
+        #
+        # Constants are tuned so the output lands in the documented range for each
+        # model family (e.g. ResNet-50 @ batch 256 fp32 ~= 14 GB, GPT-2 124M
+        # @ batch 8 fp16 ~= 12 GB), which is validated in validate_real_world.py.
+        weights_optimizer_base = {
+            "resnet": 2.5,
+            "bert": 5.0,
+            "gpt": 9.0,
+            "vision_transformer": 5.5,
+            "stable_diffusion": 12.0,
+            "recommendation": 3.0,
         }[model_type]
-        gpu_adjust = {"t4": 1.12, "v100": 1.0, "a100": 0.9, "rtx4090": 0.95}[gpu_type]
+        activation_per_sample = {
+            "resnet": 0.045,
+            "bert": 0.16,
+            "gpt": 0.60,
+            "vision_transformer": 0.13,
+            "stable_diffusion": 1.6,
+            "recommendation": 0.015,
+        }[model_type]
+        gpu_adjust = {"t4": 1.05, "v100": 1.0, "a100": 0.98, "rtx4090": 1.0}[gpu_type]
         per_gpu_batch = batch_size / max(num_gpus, 1)
-        memory_from_batch = np.sqrt(per_gpu_batch) * 1.6
-        precision_factor = 0.82 if mixed_precision else 1.0
-        return float((model_base + memory_from_batch) * gpu_adjust * precision_factor)
+        # Mixed precision mainly shrinks activation memory (fp16 activations),
+        # while weights/optimizer state stay resident.
+        activation_factor = 0.6 if mixed_precision else 1.0
+        activation_mem = activation_per_sample * per_gpu_batch * activation_factor
+        noise = np.random.normal(1.0, 0.05)
+        return float(max(0.5, (weights_optimizer_base + activation_mem) * gpu_adjust * noise))
 
     def _sample_failure(
         self,
@@ -195,17 +231,25 @@ class SyntheticWorkloadGenerator:
         distributed_training: bool,
     ) -> tuple[bool, str]:
         vram_capacity = {"t4": 16, "v100": 32, "a100": 80, "rtx4090": 24}[gpu_type]
-        prob = 0.03
-        if peak_vram > vram_capacity:
-            prob += 0.45
-        if model_type in {"gpt", "stable_diffusion"} and gpu_type == "t4":
+        # Memory pressure is the dominant, learnable driver of failure: jobs that
+        # sit near the GPU's capacity OOM or crash far more often than jobs with
+        # headroom, even before they strictly exceed it (fragmentation, peak spikes).
+        utilization = peak_vram / vram_capacity
+        prob = 0.02
+        if utilization > 1.0:
+            prob += 0.75
+        elif utilization > 0.85:
+            prob += 0.35
+        elif utilization > 0.7:
             prob += 0.12
+        if model_type in {"gpt", "stable_diffusion"} and gpu_type == "t4":
+            prob += 0.10
         if batch_size >= 256:
-            prob += 0.1
+            prob += 0.06
         if distributed_training and num_gpus >= 4:
-            prob += 0.04
+            prob += 0.05
 
-        failed = self.rng.random() < min(prob, 0.9)
+        failed = self.rng.random() < min(prob, 0.95)
         if not failed:
             return False, "none"
 

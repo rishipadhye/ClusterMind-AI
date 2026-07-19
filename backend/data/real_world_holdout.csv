@@ -1,0 +1,16 @@
+job_id,model_type,framework,gpu_type,num_gpus,batch_size,dataset_size,cpu_cores,ram_gb,estimated_flops,distributed_training,mixed_precision,gpu_utilization,peak_vram_gb,failed,failure_reason,source
+resnet50_bs256_fp32_v100,resnet,pytorch,v100,1,256,1281167,16,64,4003646875000.0,0,0,75.0,14.0,0,none,ResNet-50/ImageNet fp32 ~14GB (torchvision refs)
+resnet50_bs128_fp16_t4,resnet,pytorch,t4,1,128,1281167,8,32,8007293750000.0,0,1,75.0,7.0,0,none,ResNet-50 amp batch128 ~7GB (Colab T4 reports)
+bert_base_bs32_fp16_v100,bert,pytorch,v100,1,32,100000,16,64,7812500000000.0,0,1,75.0,10.0,0,none,BERT-base fine-tune seq128 ~10GB (HF community)
+bert_large_bs16_fp16_v100,bert,pytorch,v100,1,16,100000,16,64,15625000000000.0,0,1,75.0,15.0,0,none,BERT-large fine-tune ~15GB fp16 (HF community)
+bert_large_bs64_fp32_t4,bert,pytorch,t4,1,64,100000,8,32,3906250000000.0,0,0,75.0,20.0,1,oom,BERT-large bs64 fp32 exceeds 16GB T4 -> OOM
+gpt2_124m_bs8_fp16_v100,gpt,pytorch,v100,1,8,500000,16,64,750000000000000.0,0,1,75.0,12.0,0,none,GPT-2 124M fine-tune ~12GB (nanoGPT reports)
+gpt2_medium_bs16_fp16_a100,gpt,pytorch,a100,1,16,500000,24,128,375000000000000.0,0,1,75.0,30.0,0,none,GPT-2 medium bs16 ~30GB A100 (community)
+gpt2_bs32_fp32_t4,gpt,pytorch,t4,1,32,500000,8,32,187500000000000.0,0,0,75.0,22.0,1,oom,GPT-2 bs32 fp32 exceeds 16GB T4 -> OOM
+vit_b16_bs64_fp16_v100,vision_transformer,pytorch,v100,1,64,1281167,16,64,90082054687500.0,0,1,75.0,14.0,0,none,ViT-B/16 bs64 amp ~14GB (timm community)
+vit_l16_bs32_fp32_a100,vision_transformer,pytorch,a100,1,32,1281167,24,128,180164109375000.0,0,0,75.0,26.0,0,none,ViT-L/16 bs32 fp32 ~26GB (timm community)
+sd_finetune_bs4_fp16_a100,stable_diffusion,pytorch,a100,1,4,200000,24,128,750000000000000.0,0,1,75.0,21.0,0,none,SD v1.5 fine-tune bs4 ~21GB (diffusers community)
+sd_bs8_fp32_t4,stable_diffusion,pytorch,t4,1,8,200000,8,32,375000000000000.0,0,0,75.0,28.0,1,oom,SD bs8 fp32 exceeds 16GB T4 -> OOM
+dlrm_bs512_fp16_v100,recommendation,pytorch,v100,1,512,5000000,32,256,6835937500000.0,0,1,75.0,11.0,0,none,DLRM-style bs512 ~11GB (MLPerf-adjacent)
+resnet50_bs512_fp16_a100x4,resnet,pytorch,a100,4,512,1281167,48,256,2001823437500.0,1,1,75.0,12.0,0,none,ResNet-50 DDP 4xA100 per-GPU ~12GB (community)
+sd_bs2_fp16_rtx4090,stable_diffusion,pytorch,rtx4090,1,2,200000,16,64,1500000000000000.0,0,1,75.0,18.0,0,none,SD fine-tune bs2 ~18GB on 24GB 4090 (community)
